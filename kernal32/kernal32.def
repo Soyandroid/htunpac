@@ -1,0 +1,7 @@
+LIBRARY kernal32
+
+EXPORTS
+	GetModuleHandleA=my_GetModuleHandleA
+	GetProcAddress=my_GetProcAddress
+	LoadLibraryA=my_LoadLibraryA
+	GetVersionExA=my_GetVersionExA
