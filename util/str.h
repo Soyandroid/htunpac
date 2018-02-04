@@ -91,4 +91,12 @@ void util_str_trim(char* str);
  */
 char* util_str_buffer(const uint8_t* buf, size_t len);
 
+/**
+ * Convert a string to all lower case (without creating a copy)
+ * 
+ * @param str String to convert to lower case
+ * @return Pointer to the same memory with the string converted to lower case
+ */
+char* util_str_to_lower(char* str);
+
 #endif

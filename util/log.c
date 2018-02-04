@@ -44,7 +44,7 @@ void util_log(enum util_log_level level, const char* module, const char* trace,
 static void util_log_format(enum util_log_level level, const char* module, 
         const char* trace, const char* fmt, va_list ap)
 {
-    static const char chars[] = "DEWIM";
+    static const char chars[] = "XEWID";
 
     char line[8192];
     char msg[8192];

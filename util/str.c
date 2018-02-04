@@ -137,3 +137,12 @@ char* util_str_buffer(const uint8_t* buf, size_t len)
 
     return ret;
 }
+
+char* util_str_to_lower(char* str)
+{
+    for(int i = 0; str[i]; i++) {
+        str[i] = tolower(str[i]);
+    }
+
+    return str;
+}
