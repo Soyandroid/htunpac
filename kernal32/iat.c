@@ -30,7 +30,7 @@ static void iat_analyze_and_add_iat(HMODULE module, uint32_t** ptr)
 		struct import* import = import_cache_get_import(**ptr);
 
 		if (!import) {
-			log_die("  Could not find import for addr %p", **ptr);
+			log_die("  Could not find import for addr %p at %p", **ptr, *ptr);
 		}
 
 		entry->imports[entry->num_imports++] = import;
@@ -46,19 +46,6 @@ static void iat_analyze_and_add_iat(HMODULE module, uint32_t** ptr)
 
 	log_debug("  Found %d IAT entries for %s (%p)", entry->num_imports, 
 		dll_name, module);
-}
-
-static bool iat_check_iat(HMODULE module, uint32_t* ptr)
-{
-    for (; *ptr != 0; ptr++) {
-		const struct import* import = import_cache_get_import(*ptr);
-
-		if (import == NULL || import->module != module) {
-			return false;
-		}
-	}
-
-	return true;
 }
 
 void iat_find_iats()
@@ -79,8 +66,29 @@ void iat_find_iats()
 			if (*pos > 0x100000 && *pos < 0xC0000000) {
 				struct import* import = import_cache_get_import(*pos);
 
-				if (import != NULL && iat_check_iat(import->module, pos)) {
-					iat_analyze_and_add_iat(import->module, &pos);
+				if (import != NULL) {
+
+					if (import->module == NULL) {
+						if (!import->name) {
+							log_die(
+								"Import with missing module handle %p -> %d", 
+								*pos, import->ordinal);
+						} else {
+							log_die(
+								"Import with missing module handle %p -> %s", 
+								*pos, import->name);
+						}
+					}
+
+					if (!import->name) {
+						log_debug("Found IAT at %p -> import ordinal %d", *pos, 
+							import->ordinal);
+					} else {
+						log_debug("Found IAT at %p -> import name %s", *pos, 
+							import->name);
+					}
+
+                   	iat_analyze_and_add_iat(import->module, &pos);
 				}
 			}
 		}
