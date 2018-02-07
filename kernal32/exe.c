@@ -294,7 +294,7 @@ void exe_emit_import_descriptors(struct list* iat_info_list)
     struct iat_info_entry* entry;
 
     /* Iterate all IATs of the dlls loaded */
-    for (pos = iat_info_list->head; pos != NULL; pos = pos->next) {
+    for (pos = iat_info_list->head; pos != NULL; pos = pos->next, desc++) {
         entry = containerof(pos, struct iat_info_entry, head);
         uint32_t* rva = (uint32_t*) entry->addr;
 
