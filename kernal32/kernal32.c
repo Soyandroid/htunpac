@@ -223,6 +223,9 @@ void* WINAPI my_GetProcAddress(HMODULE module, const char* param)
 
         void* proc = GetProcAddress(module, param);
 
+        log_debug("GetProcAddress (ordinal): %p, %d -> %p", module, ordinal, 
+            proc);
+
         if (!proc) {
             log_warn(
                 "GetProcAddress: ordinal %d of module %p failed to resolve", 
@@ -250,18 +253,27 @@ void* WINAPI my_GetProcAddress(HMODULE module, const char* param)
 
         void* orig_proc = GetProcAddress(module, param);
 
+        log_debug("GetProcAddress (name): %p, %s -> %p", module, param, 
+            orig_proc);
+
         if (!orig_proc) {
             log_warn("GetProcAddress: name %s of module %p failed to resolve",
                 param, module);
-        } else {
-            /* Collect imports */
-            import_cache_add_import_by_name(module, orig_proc, param);
         }
 
         /* Detour if on list */
         if (proc_detour) {
+            /* Use the detour because htpac uses GetProcAddress to assemble
+               the IAT. If we return the address of a detour func, we have
+               to cache this to resolve it correctly later on when scanning
+               and analyzing the IATs */
+            import_cache_add_import_by_name(module, proc_detour, param);
+
             return proc_detour;
         } else {
+            /* Collect imports */
+            import_cache_add_import_by_name(module, orig_proc, param);
+
             return orig_proc;
         }
     }
