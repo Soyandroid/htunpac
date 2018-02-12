@@ -63,13 +63,14 @@ static void* exe_directed_virtual_alloc(uint32_t va_base, uint32_t size)
 }
 
 static void exe_alloc_import_descriptors(struct list* iat_info_list, 
-        IMAGE_IMPORT_DESCRIPTOR** descs, char** text)
+        IMAGE_IMPORT_DESCRIPTOR** descs, uint32_t** list_rvas, char** text)
 {
     /* imp desc list is terminated by a null entry, we count it here */
     uint32_t dir_size = sizeof(IMAGE_IMPORT_DESCRIPTOR);
     struct list_node* pos;
     struct iat_info_entry* entry;
     uint32_t count_descriptors = 0;
+    uint32_t count_rva_list = 0;
 
     /* Calculate total size of descriptor */
     for (pos = iat_info_list->head; pos != NULL; pos = pos->next) {
@@ -83,21 +84,37 @@ static void exe_alloc_import_descriptors(struct list* iat_info_list,
             struct import* import = entry->imports[j];
 
             if (import->name) {
-                // TODO why +3 ?
+                /* +3: WORD for hint value (index into AddressOfNames array) 
+                   and null terminator */
                 dir_size += strlen(import->name) + 3;
             }
+            // TODO if not name we still need some space +2 for ordinal?
+        
+            dir_size += sizeof(uint32_t);
+            count_rva_list++;
         }
 
         count_descriptors++;
     }
 
+    /* count_descriptors + 1: last descriptor is set to null to terminate the 
+       list */
+    count_descriptors++;
+    dir_size += sizeof(IMAGE_IMPORT_DESCRIPTOR);
+
     log_debug("Allocating %d byte .idata section", dir_size);
 
     *descs = (IMAGE_IMPORT_DESCRIPTOR*) exe_allocate_section(
         ".idata", dir_size);
-    *text = (char*) (((uint32_t) *descs) + 
-        (count_descriptors + 1) * sizeof(IMAGE_IMPORT_DESCRIPTOR));
+        
+    *list_rvas = (uint32_t*) (((uint32_t) *descs) + 
+        count_descriptors * sizeof(IMAGE_IMPORT_DESCRIPTOR));
 
+    /* text stuff follows the descriptors */
+    *text = (char*) (((uint32_t) *list_rvas) + 
+        count_rva_list * sizeof(uint32_t));
+
+    /* Add to data directory */
     IMAGE_DATA_DIRECTORY* import_dir = &exe_nt_headers->
         OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     import_dir->Size = dir_size;
@@ -286,9 +303,10 @@ void exe_log()
 void exe_emit_import_descriptors(struct list* iat_info_list)
 {
     IMAGE_IMPORT_DESCRIPTOR* desc;
+    uint32_t* list_rvas;
     char* text;
 
-    exe_alloc_import_descriptors(iat_info_list, &desc, &text);
+    exe_alloc_import_descriptors(iat_info_list, &desc, &list_rvas, &text);
 
     struct list_node* pos;
     struct iat_info_entry* entry;
@@ -298,18 +316,22 @@ void exe_emit_import_descriptors(struct list* iat_info_list)
         entry = containerof(pos, struct iat_info_entry, head);
         uint32_t* rva = (uint32_t*) entry->addr;
 
-        log_debug(
-            "Emitting import descriptors and import records for %s (rva %p)",
-            entry->name_dll, rva);
-
+        desc->OriginalFirstThunk = exe_to_rva((uint32_t) list_rvas);        
         desc->Name = exe_to_rva((uint32_t) text);
         desc->FirstThunk = exe_to_rva(entry->addr);
 
+        log_debug(
+            "Emitting import descriptors and import records for %s (rva %p, "
+            "original first thunk %p, name %p, first thunk %p)", 
+            entry->name_dll, rva, desc->OriginalFirstThunk, desc->Name, 
+            desc->FirstThunk);
+
+        /* Copy name to text sub-section */
         strcpy(text, entry->name_dll);
         text += strlen(entry->name_dll) + 1;
 
         /* Imports of dll */
-        for (uint32_t j = 0 ; j < entry->num_imports; j++, rva++) {
+        for (uint32_t j = 0 ; j < entry->num_imports; j++, rva++, list_rvas++) {
             struct import* import = entry->imports[j];
 
             if (!import->name) {
@@ -319,10 +341,16 @@ void exe_emit_import_descriptors(struct list* iat_info_list)
                 /* Convert back to an IMPORT_BY_NAME RVA */
                 *rva = exe_to_rva((uint32_t) text);
 
+                /* skip hint value field */
                 text += 2;
                 strcpy(text, import->name);
+
+                log_debug("Imports RVA list (%d): %p -> %p (%s)", j, rva, *rva, text);
+
                 text += strlen(import->name) + 1;
             }
+
+            *list_rvas = *rva;
         }
     }
 }
