@@ -94,6 +94,10 @@ static void exe_alloc_import_descriptors(struct list* iat_info_list,
             count_rva_list++;
         }
 
+        /* Last entry of each list must be set to 0 to terminte the list */
+        dir_size += sizeof(uint32_t);
+        count_rva_list++;
+
         count_descriptors++;
     }
 
@@ -352,6 +356,10 @@ void exe_emit_import_descriptors(struct list* iat_info_list)
 
             *list_rvas = *rva;
         }
+
+        /* leave one entry null to terminate the list by skipping it. already
+           considered on allocation */
+        list_rvas++;
     }
 }
 
