@@ -23,15 +23,21 @@ if %ERRORLEVEL% neq 0 (
     goto DONE
 )
 
-:: TODO run program that creates the .bak file and changes the dll name in the exe
+:: Run program that creates the .bak file and changes the dll name in the exe
+pre-dump.exe %1
 
-echo Unpac'ing %1 ...
+::echo Unpac'ing %1 ...
 %1
 
 :: Stop and unload kernel module
 sc stop htpac > null
 sc delete htpac > null
 del C:\HtsysmNT.sys > null
+
+:: Revert altered exec and backup
+for %%i IN ("%1") do (
+    move %%~ni.bak %1
+)
 
 echo Done
 
