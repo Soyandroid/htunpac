@@ -1,4 +1,5 @@
 include kernal32/Module.mk
+include pedumper/Module.mk
 include util/Module.mk
 
 #
@@ -12,6 +13,7 @@ $(zipdir)/:
 
 $(BUILDDIR)/htunpac.zip: \
 		build/bin/indep-32/kernal32.dll \
+		build/bin/indep-32/pedumper.exe \
 
 	$(V)echo ... $@
 	$(V)zip -j $@ $^
