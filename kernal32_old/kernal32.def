@@ -1,7 +1,0 @@
-LIBRARY	"kernal32"
-
-EXPORTS
-	GetModuleHandleA=FakeGetModuleHandleA
-	GetProcAddress=FakeGetProcAddress
-	LoadLibraryA=FakeLoadLibraryA
-	GetVersionExA=FakeGetVersionExA
