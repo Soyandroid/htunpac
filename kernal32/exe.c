@@ -7,7 +7,7 @@
 
 #include "util/log.h"
 
-static const uint32_t PAGE_SIZE = 0x100;
+static const uint32_t PAGE_SIZE = 0x1000;
 
 static uint32_t exe_base;
 static IMAGE_DOS_HEADER* exe_dos_header;
@@ -148,6 +148,49 @@ uint32_t exe_get_section_count()
     return exe_nt_headers->FileHeader.NumberOfSections;
 }
 
+void exe_split_section(uint32_t sec_idx, const char* name, size_t split_size)
+{
+    IMAGE_SECTION_HEADER* section = exe_get_section(sec_idx);
+
+    size_t size_first_chunk = exe_round_up_page_size(split_size);
+    size_t size_second_chunk = section->Misc.VirtualSize - size_first_chunk;
+
+    log_debug("Splitting section %d, size %d (%X) into %d (%X) and %d (%X)", sec_idx, 
+        section->Misc.VirtualSize, section->Misc.VirtualSize, size_first_chunk, 
+        size_first_chunk, size_second_chunk, size_second_chunk);
+
+    section->Misc.VirtualSize = size_first_chunk;
+    section->SizeOfRawData = size_first_chunk;
+
+    IMAGE_SECTION_HEADER* second_section = 
+        exe_section_header + exe_nt_headers->FileHeader.NumberOfSections++; 
+
+    ZeroMemory(second_section, sizeof(IMAGE_SECTION_HEADER));
+
+    /* Init section header */
+    strcpy((char*) second_section->Name, name);
+    second_section->Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA 
+        | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
+    /* Always align loaded section size to full page size */
+    second_section->Misc.VirtualSize = size_second_chunk;
+    /* Size of raw data size stored in file */
+    second_section->SizeOfRawData = size_second_chunk;
+
+    /* Set attribute for section pos in exe file */
+    second_section->PointerToRawData = 
+        section->PointerToRawData + size_first_chunk;
+
+    /* Set attribute for loaded section */
+    second_section->VirtualAddress = 
+        (uint32_t) section->VirtualAddress + size_first_chunk;
+
+    log_debug("New split section %s -> size: %d", name, size_second_chunk);
+    log_debug("1st stored_section_pos: %d", section->PointerToRawData);
+    log_debug("1st loaded_section: %p", section->VirtualAddress);
+    log_debug("2nd stored_section_pos: %d", second_section->PointerToRawData);
+    log_debug("2nd loaded_section: %p", second_section->VirtualAddress);
+}
+
 void* exe_allocate_section(const char* name, uint32_t size)
 {
     if (strlen(name) >= 8) {
@@ -204,10 +247,19 @@ void exe_delete_section(uint32_t idx)
 {
     log_debug("Delete section %d", idx);
 
+    IMAGE_SECTION_HEADER* delete_section = exe_get_section(idx);
+    uint32_t space_freed = delete_section->SizeOfRawData;
+
     memmove(exe_section_header + idx, exe_section_header + idx + 1, 
         sizeof(IMAGE_SECTION_HEADER) * (exe_get_section_count() - idx - 1));
 
     exe_nt_headers->FileHeader.NumberOfSections--;
+
+    for (int i = idx; i < exe_get_section_count(); i++) {
+        IMAGE_SECTION_HEADER* section = exe_get_section(i);
+
+        section->PointerToRawData -= space_freed;
+    }
 
     exe_header_update_total_section_size();
 }
@@ -280,17 +332,174 @@ void exe_log()
 {
     log_debug("Executable breakdown (base %p)", exe_base);
 
+    log_debug("----------------------------------DOS Header Information----------------------------------");
     log_debug("DOS header (rva %p, addr %p)", 
         exe_to_rva((uint32_t) exe_dos_header), exe_dos_header);
+    log_debug("Magic number: %#x (%s)", exe_dos_header->e_magic, 
+        exe_dos_header->e_magic == 0x5a4d ? "MZ" : "-");
+    log_debug("Bytes on last page of file: %d", exe_dos_header->e_cblp);
+    log_debug("Pages in file: %#x", exe_dos_header->e_cp);
+    log_debug("Relocations: %#x", exe_dos_header->e_crlc);
+    log_debug("Size of header in paragraphs: %#x", 
+        exe_dos_header->e_cparhdr);
+    log_debug("Minimum extra paragraphs needed: %#x", 
+        exe_dos_header->e_minalloc);
+    log_debug("Maximum extra paragraphs needed: %#x", 
+        exe_dos_header->e_maxalloc);
+    log_debug("Initial (relative) SS value: %#x", exe_dos_header->e_ss);
+    log_debug("Initial SP value: %#x", exe_dos_header->e_sp);
+    log_debug("Checksum: %#x", exe_dos_header->e_csum);
+    log_debug("Initial IP value: %#x", exe_dos_header->e_ip);
+    log_debug("Initial (relative) CS value: %#x", exe_dos_header->e_cs);
+    log_debug("File address of relocation table: %#x", 
+        exe_dos_header->e_lfarlc);
+    log_debug("Overlay number: %#x", exe_dos_header->e_ovno);
+    log_debug("OEM identifier (for e_oeminfo): %#x", 
+        exe_dos_header->e_oemid);
+    log_debug("OEM information; e_oemid specific: %#x",	
+        exe_dos_header->e_oeminfo);
+    log_debug("File address of new exe header: %#lx",	
+        exe_dos_header->e_lfanew);
 
+    log_debug("---------------------------------- NT Header Information----------------------------------");
     log_debug("NT header (rva %p, addr %p)", (void*) exe_dos_header->e_lfanew, 
         exe_nt_headers);
 
+    log_debug("Signature: %#lx (%s)", exe_nt_headers->Signature, "PE");
+    log_debug("Computer architecture type: ");
+
+    IMAGE_FILE_HEADER image_file_header = exe_nt_headers->FileHeader;
+
+    switch(image_file_header.Machine){
+        case IMAGE_FILE_MACHINE_I386:
+            log_debug("x86");
+            break;
+        case IMAGE_FILE_MACHINE_IA64:
+            log_debug("Intel Itanium");
+            break;
+        case IMAGE_FILE_MACHINE_AMD64:
+            log_debug("x64");
+            break;
+    }
+
+    log_debug("Number of sections: %#x", image_file_header.NumberOfSections);
+    log_debug("Timestamp: %lu", image_file_header.TimeDateStamp);
+    log_debug("Symbol table offset: %#lx", image_file_header.PointerToSymbolTable);
+    log_debug("Number of symbols: %#lx", image_file_header.NumberOfSymbols);
+    log_debug("Size of optional headers: %#x", image_file_header.SizeOfOptionalHeader);
+
+    log_debug("Image characteristics: ");
+
+    if ((image_file_header.Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE) == IMAGE_FILE_EXECUTABLE_IMAGE) {
+        log_debug("The file is executable.");
+    }
+
+    if ((image_file_header.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) == IMAGE_FILE_LARGE_ADDRESS_AWARE) {
+        log_debug("The application can handle addresses larger than 2 GB.");
+    }
+
+    if ((image_file_header.Characteristics & IMAGE_FILE_SYSTEM) == IMAGE_FILE_SYSTEM) {
+        log_debug("The image is a system file.");
+    }
+
+    if ((image_file_header.Characteristics & IMAGE_FILE_DLL) == IMAGE_FILE_DLL) {
+        log_debug("The image is a DLL file.");
+    }
+
+    log_debug("------------------------------PE Optional Header Information------------------------------");
     log_debug("    OEP, rva %p, addr %p", 
         exe_nt_headers->OptionalHeader.AddressOfEntryPoint, 
         exe_from_rva(exe_nt_headers->OptionalHeader.AddressOfEntryPoint));
-    log_debug("    Size of image: %d", 
-        exe_nt_headers->OptionalHeader.SizeOfImage);
+    log_debug("Image file state: %#x (%s)", exe_nt_headers->OptionalHeader.Magic, exe_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? "PE64" : "PE32" );
+    log_debug("Major Linker Version: %#x (%d)", exe_nt_headers->OptionalHeader.MajorLinkerVersion, exe_nt_headers->OptionalHeader.MajorLinkerVersion);
+    log_debug("Minor Linker Version: %#x (%d)", exe_nt_headers->OptionalHeader.MinorLinkerVersion, exe_nt_headers->OptionalHeader.MinorLinkerVersion);
+    log_debug("Size of code section(.text): %lu bytes", exe_nt_headers->OptionalHeader.SizeOfCode);
+    log_debug("Size of initialized data section: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfInitializedData);
+    log_debug("Size of uninitialized data section: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfUninitializedData);
+    log_debug("Address of entry point: %#lx", exe_nt_headers->OptionalHeader.AddressOfEntryPoint);
+    log_debug("Base address of code section: %#lx", exe_nt_headers->OptionalHeader.BaseOfCode);
+    log_debug("Base address of data section: %#lx", exe_nt_headers->OptionalHeader.BaseOfData);
+    log_debug("Base address of image in memory: %#lx", exe_nt_headers->OptionalHeader.ImageBase);
+    log_debug("Sections alignment in memory (bytes): %#lx", exe_nt_headers->OptionalHeader.SectionAlignment);
+    log_debug("Raw data of sections alignment in image file (bytes): %#lx", exe_nt_headers->OptionalHeader.FileAlignment);
+    log_debug("OS major version required: %#x (%d)", exe_nt_headers->OptionalHeader.MajorOperatingSystemVersion, exe_nt_headers->OptionalHeader.MajorOperatingSystemVersion);
+    log_debug("OS minor version required: %#x (%d)", exe_nt_headers->OptionalHeader.MinorOperatingSystemVersion, exe_nt_headers->OptionalHeader.MinorOperatingSystemVersion);
+    log_debug("Image major version number: %#x (%d)", exe_nt_headers->OptionalHeader.MajorImageVersion, exe_nt_headers->OptionalHeader.MajorImageVersion);
+    log_debug("Image minor version number: %#x (%d)", exe_nt_headers->OptionalHeader.MinorImageVersion, exe_nt_headers->OptionalHeader.MinorImageVersion);
+    log_debug("Subsystem major version number: %#x (%d)", exe_nt_headers->OptionalHeader.MajorSubsystemVersion, exe_nt_headers->OptionalHeader.MajorSubsystemVersion);
+    log_debug("Subsystem minor version number: %#x (%d)", exe_nt_headers->OptionalHeader.MinorSubsystemVersion, exe_nt_headers->OptionalHeader.MinorSubsystemVersion);
+    log_debug("Image size: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfImage);
+    log_debug("Size of headers: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfHeaders);
+    log_debug("Image file checksum: %#lx", exe_nt_headers->OptionalHeader.CheckSum);
+    log_debug("Subsystem: %#x (",exe_nt_headers->OptionalHeader.Subsystem);
+    
+    switch(exe_nt_headers->OptionalHeader.Subsystem){
+        case IMAGE_SUBSYSTEM_NATIVE:
+            log_debug("Device driver - Native system process)");
+            break;
+
+        case IMAGE_SUBSYSTEM_WINDOWS_GUI:
+            log_debug("Windows GUI)");
+            break;
+
+        case IMAGE_SUBSYSTEM_WINDOWS_CUI:
+            log_debug("Windows CUI)");
+            break;
+
+        case IMAGE_SUBSYSTEM_WINDOWS_CE_GUI:
+            log_debug("Windows CE)");
+            break;
+    }
+
+    log_debug("Dll characteristics: %#x", exe_nt_headers->OptionalHeader.DllCharacteristics);
+    log_debug("Number of bytes reserved for stack: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfStackReserve);
+    log_debug("Number of bytes to commit for stack: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfStackCommit);
+    log_debug("Number of bytes to reserve for local heap: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfHeapReserve);
+    log_debug("Number of bytes to commit for local heap: %lu bytes", exe_nt_headers->OptionalHeader.SizeOfHeapCommit);
+    log_debug("Number of directory entries: %lu", exe_nt_headers->OptionalHeader.NumberOfRvaAndSizes);
+
+    log_debug("----------------------------------Image Data Directories----------------------------------");
+    for (int i = 0; i < exe_nt_headers->OptionalHeader.NumberOfRvaAndSizes; i++) {
+        log_debug("Directory %d: %#lx (%lu bytes)", i, 
+            exe_nt_headers->OptionalHeader.DataDirectory[i].VirtualAddress, 
+            exe_nt_headers->OptionalHeader.DataDirectory[i].Size);
+    }
+    
+    for (uint32_t i = 0; i < exe_get_section_count(); i++) {
+        log_debug("-----------------------------------Image Section Header-----------------------------------");
+        IMAGE_SECTION_HEADER* section = exe_get_section(i);
+        log_debug("Section %d", i);
+        log_debug("Section name: %s", section->Name);
+        log_debug("File Address: %#lx", section->Misc.PhysicalAddress);
+        log_debug("Section size in memory: %lu bytes", section->Misc.VirtualSize);
+        log_debug("Virtual Address: %#lx", section->VirtualAddress);
+        log_debug("Size of initialized data on disk: %lu bytes", section->SizeOfRawData);
+        log_debug("Pointer to raw data: %#lx", section->PointerToRawData);
+        log_debug("Pointer to relocations: %#lx", section->PointerToRelocations);
+        log_debug("Pointer to line numbers: %#lx", section->PointerToLinenumbers);
+        log_debug("Number of relocation entries: %#x", section->NumberOfRelocations);
+        log_debug("Number of line number entries: %#x", section->NumberOfLinenumbers);
+        log_debug("Image characteristics: ");
+
+        if((section->Characteristics & IMAGE_SCN_CNT_CODE) == IMAGE_SCN_CNT_CODE)
+            log_debug("The section contains executable code.");
+        if((section->Characteristics & IMAGE_SCN_CNT_INITIALIZED_DATA) == IMAGE_SCN_CNT_INITIALIZED_DATA)
+            log_debug("The section contains initialized data.");
+        if((section->Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == IMAGE_SCN_CNT_UNINITIALIZED_DATA)
+            log_debug("The section contains uninitialized data.");
+        if((section->Characteristics & IMAGE_SCN_LNK_INFO) == IMAGE_SCN_LNK_INFO)
+            log_debug("The section contains comments or other information.");
+        if((section->Characteristics & IMAGE_SCN_MEM_SHARED) == IMAGE_SCN_MEM_SHARED)
+            log_debug("The section can be shared in memory.");
+        if((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) == IMAGE_SCN_MEM_EXECUTE)
+            log_debug("The section can be executed as code.");
+        if((section->Characteristics & IMAGE_SCN_MEM_READ) == IMAGE_SCN_MEM_READ)
+            log_debug("The section can be read.");
+        if((section->Characteristics & IMAGE_SCN_MEM_WRITE) == IMAGE_SCN_MEM_WRITE)
+            log_debug("The section can be written to.");
+    }
+    
+    /*
     log_debug("    Num sections: %d", exe_get_section_count());
 
     for (uint32_t i = 0; i < exe_get_section_count(); i++) {
@@ -302,6 +511,7 @@ void exe_log()
         log_debug("      Pos (in raw data): %p", section->PointerToRawData);
         log_debug("      Virtual size: %d", section->Misc.VirtualSize);
     }
+    */
 }
 
 void exe_emit_import_descriptors(struct list* iat_info_list)
@@ -380,6 +590,15 @@ void exe_dump_to_file(const char* filename)
         log_die("Opening output file %s failed: %d", filename, GetLastError());
     }
 
+    // DWORD chunk = 1024 * 1024;
+
+    // for (int i = 0; i < 100; i++) {
+    //     if (!WriteFile(handle, (BYTE*) 0x00404000 + chunk * i, chunk, &out, 
+    //             NULL)) {
+    //         log_die("    Writing header failed: %d", GetLastError());
+    //     }
+    // }
+
     /* Emit header */
     if (!WriteFile(handle, (BYTE*) exe_from_rva(0), exe_get_header_size(), &out, 
             NULL)) {
@@ -400,6 +619,8 @@ void exe_dump_to_file(const char* filename)
                 section->SizeOfRawData , &out, &ovl)) {
             log_die("    Writing failed: %d", GetLastError());
         }
+
+        log_debug("    Written: %d", out);
     }
 
     CloseHandle(handle);

@@ -30,7 +30,8 @@ static void iat_analyze_and_add_iat(HMODULE module, uint32_t** ptr)
 		struct import* import = import_cache_get_import(**ptr);
 
 		if (!import) {
-			log_die("  Could not find import for addr %p at %p", **ptr, *ptr);
+			log_warn("  Could not find import for addr %p at %p", **ptr, *ptr);
+			continue;
 		}
 
 		entry->imports[entry->num_imports++] = import;

@@ -16,6 +16,8 @@ void exe_delete_section(uint32_t idx);
 
 IMAGE_SECTION_HEADER* exe_get_section(uint32_t idx);
 
+void exe_split_section(uint32_t sec_idx, const char* name, size_t split_size);
+
 uint32_t exe_get_header_size();
 
 IMAGE_NT_HEADERS* exe_get_nt_headers();

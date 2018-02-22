@@ -121,7 +121,7 @@ void import_cache_add_dll(HMODULE module, const char* name)
 
     if (pos != NULL) {
         if (_stricmp(entry->name, name)) {
-            log_die("Different names of imports %s and %s for same module %p", 
+            log_warn("Different names of imports %s and %s for same module %p", 
                 entry->name, name, module);
         }
     } else {
@@ -151,7 +151,7 @@ void import_cache_add_import_by_name(HMODULE module, void* addr,
         import->name = util_str_dup(name);
     } else {
         if (_stricmp(import->name, name)) {
-            log_die("Different names of imports %s and %s for same module %p, "
+            log_warn("Different names of imports %s and %s for same module %p, "
                 "address %p", import->name, name, module, addr);
         }
     }
