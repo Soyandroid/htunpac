@@ -11,6 +11,11 @@ BUILDDIR        ?= build
 # Internal variables
 #
 
+builddir_docker 	  := $(BUILDDIR)/docker
+
+docker_container_name := "htunpac-build"
+docker_image_name     := "htunpac:build"
+
 depdir          := $(BUILDDIR)/dep
 objdir          := $(BUILDDIR)/obj
 bindir          := $(BUILDDIR)/bin
@@ -23,17 +28,29 @@ cflags          := -O2 -pipe -ffunction-sections -fdata-sections \
                     -Wall -Werror -std=c99
 ldflags		:= -Wl,--gc-sections -static-libgcc
 
+
 #
 # The first target that GNU Make encounters becomes the default target.
 # Define our ultimate target (`all') here, and also some helpers
 #
 
 all:
+build:
 
 .PHONY: clean
 
 clean:
 	$(V)rm -rf $(BUILDDIR)
+
+build-docker:
+	$(V)docker rm -f $(docker_container_name) 2> /dev/null || true
+	$(V)docker build -t $(docker_image_name) -f Dockerfile .
+	$(V)docker create --name $(docker_container_name) $(docker_image_name)
+	$(V)rm -rf $(builddir_docker)
+	$(V)mkdir -p $(builddir_docker)
+	$(V)docker cp $(docker_container_name):/htunpac/build $(builddir_docker)
+	$(V)mv $(builddir_docker)/build/* $(builddir_docker)
+	$(V)rm -r $(builddir_docker)/build
 
 #
 # Pull in module definitions
